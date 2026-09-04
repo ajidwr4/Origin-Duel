@@ -4,6 +4,8 @@
     "includes": [
       "**",
       "!!contracts/lib",
+      "!!contracts/out",
+      "!!contracts/cache",
       "!dokumentasi",
       "!docs",
       "!**/node_modules",
