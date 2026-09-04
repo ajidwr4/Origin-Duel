@@ -3,6 +3,7 @@
   "files": {
     "includes": [
       "**",
+      "!!contracts/lib",
       "!dokumentasi",
       "!docs",
       "!**/node_modules",
