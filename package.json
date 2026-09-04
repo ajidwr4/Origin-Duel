@@ -1,0 +1,28 @@
+{
+  "name": "origin-duel",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Origin Duel monorepo",
+  "type": "module",
+  "packageManager": "npm@11.19.0",
+  "engines": {
+    "node": "24.20.0",
+    "npm": "11.19.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.browser.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.10",
+    "@types/node": "24.3.0",
+    "tsx": "4.23.12",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
+  }
+}
