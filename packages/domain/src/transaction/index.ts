@@ -6,6 +6,10 @@ import {
 } from "../constants/index.js";
 import { Bytes32HexV1Schema, UINT256_MAX } from "../primitives/index.js";
 
+export * from "./transaction-classifier.js";
+export * from "./transaction-dna.js";
+export * from "./transaction-type2.js";
+
 export const UINT64_MAX = (1n << 64n) - 1n;
 export const BlockHeightV1Schema = z.bigint().min(0n).max(UINT64_MAX);
 export const TransactionIndexV1Schema = z.bigint().min(0n).max(UINT256_MAX);
