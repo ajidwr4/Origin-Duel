@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_ENCODED_TRANSACTION_BYTES_V1 } from "../constants/index.js";
 import {
   Bytes32HexV1Schema,
   TokenIdJsonV1Schema,
@@ -7,7 +8,13 @@ import {
 import { SourceTxV1Schema } from "../transaction/index.js";
 import { Uint64StringV1Schema, Uint256StringV1Schema } from "./scalars.js";
 
-const LowercaseEvenHexBytesV1Schema = z.string().regex(/^0x(?:[0-9a-f]{2})*$/);
+const LowercaseEvenHexBytesV1Schema = z
+  .string()
+  .regex(/^0x(?:[0-9a-f]{2})*$/)
+  .refine(
+    (value) => (value.length - 2) / 2 <= MAX_ENCODED_TRANSACTION_BYTES_V1,
+    `encodedTransaction must be at most ${MAX_ENCODED_TRANSACTION_BYTES_V1} bytes`,
+  );
 
 export const SepoliaAdvisoryV1Schema = z.strictObject({
   lookupStatus: z.enum(["FOUND_MINED", "FOUND_PENDING", "NOT_FOUND"]),

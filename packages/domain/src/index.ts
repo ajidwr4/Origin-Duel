@@ -4,5 +4,6 @@ export * from "./battle/index.js";
 export * from "./constants/index.js";
 export * from "./deck/index.js";
 export * from "./monster/index.js";
+export * from "./primitives/index.js";
 export * from "./profile/index.js";
 export * from "./transaction/index.js";

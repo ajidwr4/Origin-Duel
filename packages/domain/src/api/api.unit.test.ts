@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { MAX_ENCODED_TRANSACTION_BYTES_V1 } from "../constants/index.js";
 import { UINT256_MAX } from "../primitives/index.js";
 import {
   ApiErrorResponseV1Schema,
+  AttestcoinProofPayloadV1Schema,
   AuthChallengeRequestV1Schema,
   AuthVerifyRequestV1Schema,
   BattleEligibilityV1Schema,
@@ -16,6 +18,16 @@ import {
 const ADDRESS = `0x${"11".repeat(20)}`;
 const HASH = `0x${"22".repeat(32)}`;
 const UUID = "3a4a24b8-32a4-4b46-8fab-2ff21cc6791c";
+
+const proofPayload = (encodedTransaction: string) => ({
+  chainKey: 1,
+  blockHeight: "1",
+  encodedTransaction,
+  merkleRoot: HASH,
+  siblings: [],
+  lowerEndpointDigest: HASH,
+  continuityRoots: [],
+});
 
 describe("API mutation schemas", () => {
   it("preserves exact capture workflow and player-facing states", () => {
@@ -101,6 +113,25 @@ describe("API mutation schemas", () => {
 });
 
 describe("normalized chain schemas", () => {
+  it("enforces the canonical encoded transaction byte boundary", () => {
+    expect(
+      AttestcoinProofPayloadV1Schema.safeParse(
+        proofPayload(`0x${"ab".repeat(MAX_ENCODED_TRANSACTION_BYTES_V1)}`),
+      ).success,
+    ).toBe(true);
+    expect(
+      AttestcoinProofPayloadV1Schema.safeParse(
+        proofPayload(`0x${"ab".repeat(MAX_ENCODED_TRANSACTION_BYTES_V1 + 1)}`),
+      ).success,
+    ).toBe(false);
+    expect(
+      AttestcoinProofPayloadV1Schema.safeParse(proofPayload("0xabc")).success,
+    ).toBe(false);
+    expect(
+      AttestcoinProofPayloadV1Schema.safeParse(proofPayload("0xAB")).success,
+    ).toBe(false);
+  });
+
   it("uses canonical decimal strings for uint256 values", () => {
     expect(
       CreditcoinTxReceiptV1Schema.parse({
