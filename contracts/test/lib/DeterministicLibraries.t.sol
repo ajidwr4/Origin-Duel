@@ -3,6 +3,7 @@ pragma solidity 0.8.36;
 
 import {Test} from "forge-std/Test.sol";
 import {MonsterGeneratorV1} from "../../src/lib/MonsterGeneratorV1.sol";
+import {MonsterTypesV1} from "../../src/lib/MonsterTypesV1.sol";
 import {TransactionDnaV1} from "../../src/lib/TransactionDnaV1.sol";
 import {TransactionType2V1} from "../../src/lib/TransactionType2V1.sol";
 
@@ -104,33 +105,41 @@ contract DeterministicLibrariesTest is Test {
     }
 
     function testVectorsAThroughC() public pure {
-        _assertMonster(
-            0x03c4594447d168c8bf50701a468dfb08d85e06f4496f3315d6359f134ede6da8,
-            7,
-            3,
-            800,
-            1200,
-            MonsterGeneratorV1.Element.WIND,
-            MonsterGeneratorV1.Rarity.RARE
+        _assertMonster(0x03c4594447d168c8bf50701a468dfb08d85e06f4496f3315d6359f134ede6da8, 7, 3, 800, 1200, 2, 1);
+        _assertMonster(0x0200000000000000000000000000000000000000000000000000000000000002, 5, 2, 1000, 1000, 2, 3);
+        _assertMonster(0x010000000000000000000000000000000000000000000000000000000000000d, 3, 6, 1560, 1040, 0, 0);
+    }
+
+    function testCanonicalResolvedMonsterType() public pure {
+        bytes32 dna = 0x03c4594447d168c8bf50701a468dfb08d85e06f4496f3315d6359f134ede6da8;
+        bytes32 sourceTx = 0xe8a1a631557a4b63768f2ea5dd7714f825ab39416d3e753c848e50e39dd24bab;
+        MonsterTypesV1.GeneratedMonsterV1 memory generated = MonsterGeneratorV1.generateMonster(dna);
+        MonsterTypesV1.ResolvedMonsterV1 memory resolved = MonsterTypesV1.ResolvedMonsterV1({
+            speciesId: generated.speciesId,
+            level: generated.level,
+            atk: generated.atk,
+            def: generated.def,
+            element: generated.element,
+            rarity: generated.rarity,
+            transactionDNA: generated.transactionDNA,
+            sourceTx: sourceTx
+        });
+
+        assertEq(
+            keccak256(abi.encode(generated)),
+            keccak256(
+                abi.encode(
+                    resolved.speciesId,
+                    resolved.level,
+                    resolved.atk,
+                    resolved.def,
+                    resolved.element,
+                    resolved.rarity,
+                    resolved.transactionDNA
+                )
+            )
         );
-        _assertMonster(
-            0x0200000000000000000000000000000000000000000000000000000000000002,
-            5,
-            2,
-            1000,
-            1000,
-            MonsterGeneratorV1.Element.WIND,
-            MonsterGeneratorV1.Rarity.LEGENDARY
-        );
-        _assertMonster(
-            0x010000000000000000000000000000000000000000000000000000000000000d,
-            3,
-            6,
-            1560,
-            1040,
-            MonsterGeneratorV1.Element.FIRE,
-            MonsterGeneratorV1.Rarity.COMMON
-        );
+        assertEq(resolved.sourceTx, sourceTx);
     }
 
     function testInvalidActivityClassReverts() public {
@@ -141,8 +150,8 @@ contract DeterministicLibrariesTest is Test {
     function testFuzzBoundsConservationAndRepeat(uint248 payload, uint8 activity) public pure {
         activity = activity % 6;
         bytes32 dna = bytes32((uint256(activity) << 248) | uint256(payload));
-        MonsterGeneratorV1.GeneratedMonsterV1 memory first = MonsterGeneratorV1.generateMonster(dna);
-        MonsterGeneratorV1.GeneratedMonsterV1 memory second = MonsterGeneratorV1.generateMonster(dna);
+        MonsterTypesV1.GeneratedMonsterV1 memory first = MonsterGeneratorV1.generateMonster(dna);
+        MonsterTypesV1.GeneratedMonsterV1 memory second = MonsterGeneratorV1.generateMonster(dna);
 
         assertEq(keccak256(abi.encode(first)), keccak256(abi.encode(second)));
         assertGe(first.level, 1);
@@ -161,8 +170,8 @@ contract DeterministicLibrariesTest is Test {
         bytes32 dna = 0x03c4594447d168c8bf50701a468dfb08d85e06f4496f3315d6359f134ede6da8;
         bytes32 sourceTxA = bytes32(uint256(1));
         bytes32 sourceTxB = bytes32(uint256(2));
-        MonsterGeneratorV1.GeneratedMonsterV1 memory first = MonsterGeneratorV1.generateMonster(dna);
-        MonsterGeneratorV1.GeneratedMonsterV1 memory second = MonsterGeneratorV1.generateMonster(dna);
+        MonsterTypesV1.GeneratedMonsterV1 memory first = MonsterGeneratorV1.generateMonster(dna);
+        MonsterTypesV1.GeneratedMonsterV1 memory second = MonsterGeneratorV1.generateMonster(dna);
 
         assertTrue(sourceTxA != sourceTxB);
         assertEq(keccak256(abi.encode(first)), keccak256(abi.encode(second)));
@@ -176,7 +185,7 @@ contract DeterministicLibrariesTest is Test {
         return TransactionType2V1.reconstructSigned(transaction);
     }
 
-    function generateMonster(bytes32 dna) external pure returns (MonsterGeneratorV1.GeneratedMonsterV1 memory) {
+    function generateMonster(bytes32 dna) external pure returns (MonsterTypesV1.GeneratedMonsterV1 memory) {
         return MonsterGeneratorV1.generateMonster(dna);
     }
 
@@ -213,16 +222,16 @@ contract DeterministicLibrariesTest is Test {
         uint8 level,
         uint16 atk,
         uint16 def,
-        MonsterGeneratorV1.Element element,
-        MonsterGeneratorV1.Rarity rarity
+        uint8 element,
+        uint8 rarity
     ) private pure {
-        MonsterGeneratorV1.GeneratedMonsterV1 memory monster = MonsterGeneratorV1.generateMonster(dna);
+        MonsterTypesV1.GeneratedMonsterV1 memory monster = MonsterGeneratorV1.generateMonster(dna);
         assertEq(monster.speciesId, speciesId);
         assertEq(monster.level, level);
         assertEq(monster.atk, atk);
         assertEq(monster.def, def);
-        assertEq(uint8(monster.element), uint8(element));
-        assertEq(uint8(monster.rarity), uint8(rarity));
+        assertEq(monster.element, element);
+        assertEq(monster.rarity, rarity);
         assertEq(monster.transactionDNA, dna);
     }
 }

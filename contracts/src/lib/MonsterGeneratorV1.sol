@@ -2,6 +2,7 @@
 pragma solidity 0.8.36;
 
 import {TransactionDnaV1} from "./TransactionDnaV1.sol";
+import {MonsterTypesV1} from "./MonsterTypesV1.sol";
 
 library MonsterGeneratorV1 {
     uint256 internal constant MAX_REJECTION_ATTEMPTS = 4;
@@ -18,30 +19,11 @@ library MonsterGeneratorV1 {
     error InvalidSampleRange();
     error GenerationSamplingExhausted(bytes32 domainId);
 
-    enum Element {
-        FIRE,
-        WATER,
-        WIND
-    }
-
-    enum Rarity {
-        COMMON,
-        RARE,
-        EPIC,
-        LEGENDARY
-    }
-
-    struct GeneratedMonsterV1 {
-        uint16 speciesId;
-        uint8 level;
-        uint16 atk;
-        uint16 def;
-        Element element;
-        Rarity rarity;
-        bytes32 transactionDNA;
-    }
-
-    function generateMonster(bytes32 transactionDNA) internal pure returns (GeneratedMonsterV1 memory monster) {
+    function generateMonster(bytes32 transactionDNA)
+        internal
+        pure
+        returns (MonsterTypesV1.GeneratedMonsterV1 memory monster)
+    {
         uint8 activity = TransactionDnaV1.activityClass(transactionDNA);
         bytes32 seed = TransactionDnaV1.entropySeed(transactionDNA);
 
@@ -52,7 +34,7 @@ library MonsterGeneratorV1 {
         monster.atk = uint16((uint256(powerBudget) * atkBps) / 10_000);
         monster.def = powerBudget - monster.atk;
         monster.rarity = _resolveRarity(uniformBelow(seed, DOMAIN_RARITY, 100));
-        monster.element = Element(uniformBelow(seed, DOMAIN_ELEMENT, 3));
+        monster.element = uint8(uniformBelow(seed, DOMAIN_ELEMENT, 3));
         monster.speciesId = uint16(uint256(activity) * 2 + uniformBelow(seed, DOMAIN_SPECIES, 2) + 1);
         monster.transactionDNA = transactionDNA;
     }
@@ -89,10 +71,10 @@ library MonsterGeneratorV1 {
         return 6;
     }
 
-    function _resolveRarity(uint256 roll) private pure returns (Rarity) {
-        if (roll < 55) return Rarity.COMMON;
-        if (roll < 80) return Rarity.RARE;
-        if (roll < 95) return Rarity.EPIC;
-        return Rarity.LEGENDARY;
+    function _resolveRarity(uint256 roll) private pure returns (uint8) {
+        if (roll < 55) return 0;
+        if (roll < 80) return 1;
+        if (roll < 95) return 2;
+        return 3;
     }
 }
