@@ -3,6 +3,7 @@ pragma solidity 0.8.36;
 
 import {Test} from "forge-std/Test.sol";
 import {MonsterGeneratorV1} from "../../src/lib/MonsterGeneratorV1.sol";
+import {MonsterTypesV1} from "../../src/lib/MonsterTypesV1.sol";
 import {TransactionDnaV1} from "../../src/lib/TransactionDnaV1.sol";
 import {TransactionType2V1} from "../../src/lib/TransactionType2V1.sol";
 
@@ -70,25 +71,9 @@ contract DeterministicParityTest is Test {
             0x20ccc8654b90ae24f179eabdf16cb7d2aeb4b7577feb5de92544cc4949695987
         );
 
-        _assertMonster(dna, 7, 3, 800, 1200, MonsterGeneratorV1.Element.WIND, MonsterGeneratorV1.Rarity.RARE);
-        _assertMonster(
-            bytes32((uint256(2) << 248) | 2),
-            5,
-            2,
-            1000,
-            1000,
-            MonsterGeneratorV1.Element.WIND,
-            MonsterGeneratorV1.Rarity.LEGENDARY
-        );
-        _assertMonster(
-            bytes32((uint256(1) << 248) | 13),
-            3,
-            6,
-            1560,
-            1040,
-            MonsterGeneratorV1.Element.FIRE,
-            MonsterGeneratorV1.Rarity.COMMON
-        );
+        _assertMonster(dna, 7, 3, 800, 1200, 2, 1);
+        _assertMonster(bytes32((uint256(2) << 248) | 2), 5, 2, 1000, 1000, 2, 3);
+        _assertMonster(bytes32((uint256(1) << 248) | 13), 3, 6, 1560, 1040, 0, 0);
     }
 
     function _assertMonster(
@@ -97,16 +82,16 @@ contract DeterministicParityTest is Test {
         uint8 level,
         uint16 atk,
         uint16 def,
-        MonsterGeneratorV1.Element element,
-        MonsterGeneratorV1.Rarity rarity
+        uint8 element,
+        uint8 rarity
     ) private pure {
-        MonsterGeneratorV1.GeneratedMonsterV1 memory monster = MonsterGeneratorV1.generateMonster(dna);
+        MonsterTypesV1.GeneratedMonsterV1 memory monster = MonsterGeneratorV1.generateMonster(dna);
         assertEq(monster.speciesId, speciesId);
         assertEq(monster.level, level);
         assertEq(monster.atk, atk);
         assertEq(monster.def, def);
-        assertEq(uint8(monster.element), uint8(element));
-        assertEq(uint8(monster.rarity), uint8(rarity));
+        assertEq(monster.element, element);
+        assertEq(monster.rarity, rarity);
         assertEq(monster.transactionDNA, dna);
     }
 }
