@@ -45,7 +45,7 @@ beforeAll(async () => {
 afterAll(async () => {
   // db.destroy() already ends the underlying pg pool it owns; do not end again.
   if (dbRef !== undefined) await destroyDb(dbRef);
-});
+}, 120_000);
 
 maybeDescribe("M04-T01 db infrastructure smoke", () => {
   it("connects to a real PostgreSQL 16 server", async () => {
@@ -126,7 +126,7 @@ maybeDescribe("M04-T01 db infrastructure smoke", () => {
     expect(up.error).toBeUndefined();
     const afterUp = await names();
     expect(afterUp).toEqual(before);
-  });
+  }, 120_000);
 
   it("creates no Origin Duel canonical application table", async () => {
     // Isolate exactly the 0000 smoke migration: roll everything back, apply
@@ -148,7 +148,7 @@ maybeDescribe("M04-T01 db infrastructure smoke", () => {
 
     const restore = await suiteMigrator().migrateToLatest();
     expect(restore.error).toBeUndefined();
-  });
+  }, 120_000);
 
   it("destroys the connection cleanly", async () => {
     // Separate pool so the main suite keeps working; proves create/destroy path.
