@@ -3,19 +3,22 @@ pragma solidity 0.8.36;
 
 import {EvmV1Decoder} from "../lib/asc-contracts/contracts/common/EvmV1Decoder.sol";
 import {INativeQueryVerifier} from "../lib/asc-contracts/contracts/write-ability/common/INativeQueryVerifier.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {MonsterGeneratorV1} from "./lib/MonsterGeneratorV1.sol";
 import {MonsterTypesV1} from "./lib/MonsterTypesV1.sol";
 import {MonsterNFT} from "./MonsterNFT.sol";
 import {TransactionDnaV1} from "./lib/TransactionDnaV1.sol";
 import {TransactionType2V1} from "./lib/TransactionType2V1.sol";
 
-/// @title Origin Duel MonsterFactoryASC V1 — canonical preflight core
+/// @title Origin Duel MonsterFactoryASC V1 — canonical capture authority
 /// @notice Authoritative Attestcoin capture validation: Block Prover proof,
 ///         pinned internal decoder, exact V1 profile checks, canonical sourceTx
-///         reconstruction/binding, replay/cooldown reads, and deterministic
-///         Monster preflight. `canonicalPreflight` is read-only; the final
-///         mutation path (finalCapture) is implemented in M03-T05.
-contract MonsterFactoryASC {
+///         reconstruction/binding, replay/cooldown state, deterministic Monster
+///         generation, SignedAssetApproval presentation authorization, and the
+///         atomic finalCapture mutation path.
+contract MonsterFactoryASC is EIP712, ReentrancyGuard {
     // ---------------------------------------------------------------- errors
     error InvalidChainKey(uint64 actual);
     error EncodedTransactionTooLarge(uint256 actualBytes, uint256 maxBytes);
@@ -88,12 +91,9 @@ contract MonsterFactoryASC {
     mapping(bytes32 => uint256) public sourceTxToTokenPlusOne;
     mapping(address => uint64) public lastCaptureAt;
 
-    constructor(
-        MonsterNFT monsterNFT_,
-        address assetApprovalSigner_,
-        address blockProver_,
-        uint64 captureGenesisBlock_
-    ) {
+    constructor(MonsterNFT monsterNFT_, address assetApprovalSigner_, address blockProver_, uint64 captureGenesisBlock_)
+        EIP712("Origin Duel Asset Approval", "1")
+    {
         monsterNFT = monsterNFT_;
         assetApprovalSigner = assetApprovalSigner_;
         blockProver = INativeQueryVerifier(blockProver_);
@@ -135,6 +135,19 @@ contract MonsterFactoryASC {
         view
         returns (CanonicalPreflightResultV1 memory result)
     {
+        (MonsterTypesV1.ResolvedMonsterV1 memory monster,) = _validateSource(claimedTxHash, proof);
+        result.monster = monster;
+        result.eligibility = readEligibility(msg.sender, monster.sourceTx);
+    }
+
+    // ----------------------------------------------------------- final capture
+    /// @dev Shared source validation used by BOTH canonicalPreflight and
+    ///      finalCapture so the two paths can never drift semantically.
+    function _validateSource(bytes32 claimedTxHash, ProofPayloadV1 calldata proof)
+        internal
+        view
+        returns (MonsterTypesV1.ResolvedMonsterV1 memory monster, uint64 transactionIndex)
+    {
         // Cheap resource/chain/genesis checks run before the expensive decode.
         if (proof.encodedTransaction.length > MAX_ENCODED_TRANSACTION_BYTES_V1) {
             revert EncodedTransactionTooLarge(proof.encodedTransaction.length, MAX_ENCODED_TRANSACTION_BYTES_V1);
@@ -159,7 +172,7 @@ contract MonsterFactoryASC {
         // transactionIndex is derived via the pinned Attestcoin proof/path
         // semantics AFTER proof PASS; caller-supplied indices are never
         // canonical (calculateTxIndex on the Block Prover precompile).
-        uint64 transactionIndex = uint64(blockProver.calculateTxIndex(merkleProof));
+        transactionIndex = uint64(blockProver.calculateTxIndex(merkleProof));
 
         // ZONE 2: application profile checks over the pinned internal decoder.
         EvmV1Decoder.DecodedTransactionType2 memory decoded =
@@ -177,7 +190,6 @@ contract MonsterFactoryASC {
         if (derivedCanonicalTxHash != claimedTxHash) {
             revert ClaimedHashMismatch(claimedTxHash, derivedCanonicalTxHash);
         }
-        bytes32 sourceTx = derivedCanonicalTxHash;
 
         // Bounded evidence-shape classification, then deterministic generation.
         uint8 activityClass = _classify(decoded);
@@ -191,7 +203,7 @@ contract MonsterFactoryASC {
         MonsterTypesV1.GeneratedMonsterV1 memory generated = MonsterGeneratorV1.generateMonster(transactionDNA);
         _assertMonsterBounds(generated);
 
-        result.monster = MonsterTypesV1.ResolvedMonsterV1({
+        monster = MonsterTypesV1.ResolvedMonsterV1({
             speciesId: generated.speciesId,
             level: generated.level,
             atk: generated.atk,
@@ -199,9 +211,160 @@ contract MonsterFactoryASC {
             element: generated.element,
             rarity: generated.rarity,
             transactionDNA: generated.transactionDNA,
-            sourceTx: sourceTx
+            sourceTx: derivedCanonicalTxHash
         });
-        result.eligibility = readEligibility(msg.sender, sourceTx);
+    }
+
+    event MonsterCaptured(
+        address indexed claimant,
+        bytes32 indexed sourceTx,
+        uint256 indexed tokenId,
+        bytes32 transactionDNA,
+        bytes32 attemptKey,
+        string tokenURI
+    );
+
+    // SignedAssetApproval presentation authorization (Phase 10 §28 exact).
+    struct AssetApprovalV1 {
+        address claimant;
+        bytes32 sourceTx;
+        bytes32 attemptKey;
+        bytes32 monsterHash;
+        string tokenURI;
+        uint16 generationSpecVersion;
+        uint16 artSpecVersion;
+        uint16 metadataSpecVersion;
+        uint64 validUntil;
+    }
+
+    struct SignedAssetApprovalV1 {
+        AssetApprovalV1 approval;
+        bytes signature;
+    }
+
+    bytes32 internal constant RESOLVED_MONSTER_HASH_DOMAIN = keccak256("BUIDL_CTC_RESOLVED_MONSTER_V1");
+
+    bytes32 private constant ASSET_APPROVAL_TYPEHASH = keccak256(
+        "AssetApprovalV1(address claimant,bytes32 sourceTx,bytes32 attemptKey,bytes32 monsterHash,string tokenURI,uint16 generationSpecVersion,uint16 artSpecVersion,uint16 metadataSpecVersion,uint64 validUntil)"
+    );
+
+    uint16 internal constant GENERATION_SPEC_VERSION_ACCEPTED = 1;
+    uint16 internal constant ART_SPEC_VERSION_ACCEPTED = 1;
+    uint16 internal constant METADATA_SPEC_VERSION_ACCEPTED = 1;
+
+    error InvalidAssetApprovalSignature();
+    error AssetApprovalExpired(uint64 validUntil);
+    error AssetApprovalClaimantMismatch(address approved, address actual);
+    error AssetApprovalSourceMismatch(bytes32 approved, bytes32 actual);
+    error AssetApprovalMonsterMismatch(bytes32 approvedHash, bytes32 actualHash);
+    error InvalidAssetSpecVersion(uint16 generation, uint16 art, uint16 metadata);
+    error InvalidTokenURI();
+
+    /// @notice Atomic final capture: recomputes the full source validation and
+    ///         consumes the source exactly once. The NFT stays the sole token-ID
+    ///         allocation authority via the expectedTokenId handshake.
+    function finalCapture(
+        bytes32 claimedTxHash,
+        ProofPayloadV1 calldata proof,
+        SignedAssetApprovalV1 calldata signedApproval
+    ) external nonReentrant returns (uint256 tokenId) {
+        // Full recomputation: never trusts an earlier preflight result.
+        (MonsterTypesV1.ResolvedMonsterV1 memory monster,) = _validateSource(claimedTxHash, proof);
+
+        _validateAssetApproval(signedApproval.approval, signedApproval.signature, monster);
+
+        // Final mutation-time eligibility: current chain state only.
+        bytes32 sourceTx = monster.sourceTx;
+        uint256 consumed = sourceTxToTokenPlusOne[sourceTx];
+        if (consumed != 0) revert SourceAlreadyConsumed(sourceTx, consumed - 1);
+        uint64 cooldownEndsAt = lastCaptureAt[msg.sender] + CAPTURE_COOLDOWN_SECONDS;
+        if (block.timestamp < cooldownEndsAt) revert CaptureCooldownActive(cooldownEndsAt);
+
+        // CEI: all checks complete; read the NFT-owned token ID before effects.
+        uint256 expectedTokenId = monsterNFT.nextTokenId();
+
+        // Effects before the external mint call.
+        sourceTxToTokenPlusOne[sourceTx] = expectedTokenId + 1;
+        lastCaptureAt[msg.sender] = uint64(block.timestamp);
+
+        tokenId = monsterNFT.mintFromFactory(expectedTokenId, msg.sender, monster, signedApproval.approval.tokenURI);
+        if (tokenId != expectedTokenId) revert UnexpectedMintedTokenId(expectedTokenId, tokenId);
+
+        emit MonsterCaptured(
+            msg.sender,
+            sourceTx,
+            tokenId,
+            monster.transactionDNA,
+            signedApproval.approval.attemptKey,
+            signedApproval.approval.tokenURI
+        );
+    }
+
+    error UnexpectedMintedTokenId(uint256 expected, uint256 actual);
+
+    /// @dev Presentation authorization: signature must recover the immutable
+    ///      signer and every field must bind to the recomputed capture values.
+    function _validateAssetApproval(
+        AssetApprovalV1 calldata approval,
+        bytes calldata signature,
+        MonsterTypesV1.ResolvedMonsterV1 memory monster
+    ) internal view {
+        if (bytes(approval.tokenURI).length == 0) revert InvalidTokenURI();
+        if (block.timestamp > approval.validUntil) revert AssetApprovalExpired(approval.validUntil);
+        if (approval.claimant != msg.sender) {
+            revert AssetApprovalClaimantMismatch(approval.claimant, msg.sender);
+        }
+        if (approval.sourceTx != monster.sourceTx) {
+            revert AssetApprovalSourceMismatch(approval.sourceTx, monster.sourceTx);
+        }
+        bytes32 recomputedHash = resolvedMonsterHash(monster);
+        if (approval.monsterHash != recomputedHash) {
+            revert AssetApprovalMonsterMismatch(approval.monsterHash, recomputedHash);
+        }
+        if (
+            approval.generationSpecVersion != GENERATION_SPEC_VERSION_ACCEPTED
+                || approval.artSpecVersion != ART_SPEC_VERSION_ACCEPTED
+                || approval.metadataSpecVersion != METADATA_SPEC_VERSION_ACCEPTED
+        ) {
+            revert InvalidAssetSpecVersion(
+                approval.generationSpecVersion, approval.artSpecVersion, approval.metadataSpecVersion
+            );
+        }
+
+        bytes32 structHash = keccak256(
+            abi.encode(
+                ASSET_APPROVAL_TYPEHASH,
+                approval.claimant,
+                approval.sourceTx,
+                approval.attemptKey,
+                approval.monsterHash,
+                keccak256(bytes(approval.tokenURI)),
+                approval.generationSpecVersion,
+                approval.artSpecVersion,
+                approval.metadataSpecVersion,
+                approval.validUntil
+            )
+        );
+        address recovered = ECDSA.recover(_hashTypedDataV4(structHash), signature);
+        if (recovered != assetApprovalSigner) revert InvalidAssetApprovalSignature();
+    }
+
+    /// @notice Exact canonical ResolvedMonsterV1 hash (Phase 10 §28): abi.encode
+    ///         with the domain constant, never packed.
+    function resolvedMonsterHash(MonsterTypesV1.ResolvedMonsterV1 memory monster) public pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                RESOLVED_MONSTER_HASH_DOMAIN,
+                monster.speciesId,
+                monster.level,
+                monster.atk,
+                monster.def,
+                monster.element,
+                monster.rarity,
+                monster.transactionDNA,
+                monster.sourceTx
+            )
+        );
     }
 
     // ----------------------------------------------------------- classification

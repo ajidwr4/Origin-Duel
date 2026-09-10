@@ -805,14 +805,35 @@ contract MonsterFactoryASCPreflightTest is Test {
     }
 
     /// @dev Unit-test-only state seeding via direct storage writes; no
-    ///      production setter exists for replay/cooldown.
+    ///      production setter exists for replay/cooldown. Mapping base slots
+    ///      are discovered dynamically so base-inheritance storage layout
+    ///      changes cannot silently redirect the seeding.
+    function _mappingBase(uint256 index) internal returns (bytes32 base) {
+        // sourceTxToTokenPlusOne and lastCaptureAt are consecutive declared
+        // mappings; probe candidate bases with a sentinel write confirmed via
+        // the real public getter, then restore the sentinel slot to zero.
+        bytes32 sentinelKey = bytes32(uint256(0x5eed));
+        for (uint256 candidate = 0; candidate < 16; candidate++) {
+            bytes32 slot = keccak256(abi.encode(sentinelKey, bytes32(candidate)));
+            vm.store(address(factory), slot, bytes32(uint256(0x5eed1)));
+            (bool ok, bytes memory ret) =
+                address(factory).staticcall(abi.encodeWithSignature("sourceTxToTokenPlusOne(bytes32)", sentinelKey));
+            if (ok && ret.length == 32 && abi.decode(ret, (uint256)) == 0x5eed1) {
+                vm.store(address(factory), slot, bytes32(uint256(0)));
+                return bytes32(candidate + index);
+            }
+            vm.store(address(factory), slot, bytes32(uint256(0)));
+        }
+        revert("mapping base discovery failed");
+    }
+
     function _seedReplay(bytes32 sourceTx, uint256 tokenPlusOne) internal {
-        bytes32 slot = keccak256(abi.encode(sourceTx, bytes32(uint256(0))));
+        bytes32 slot = keccak256(abi.encode(sourceTx, _mappingBase(0)));
         vm.store(address(factory), slot, bytes32(tokenPlusOne));
     }
 
     function _seedCooldown(address who, uint64 timestamp) internal {
-        bytes32 slot = keccak256(abi.encode(who, bytes32(uint256(1))));
+        bytes32 slot = keccak256(abi.encode(who, _mappingBase(1)));
         vm.store(address(factory), slot, bytes32(uint256(timestamp)));
     }
 
