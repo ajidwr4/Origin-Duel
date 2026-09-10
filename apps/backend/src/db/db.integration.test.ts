@@ -1,4 +1,5 @@
 import { sql } from "kysely";
+import { NO_MIGRATIONS } from "kysely/migration";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, createMigrator, createPgPool, destroyDb } from "./index.ts";
 
@@ -83,31 +84,51 @@ maybeDescribe("M04-T01 db infrastructure smoke", () => {
   });
 
   it("rolls back one migration and migrates up again", async () => {
+    // migrateDown steps back exactly one migration; compare the executed
+    // name sets before/after so this stays correct as later migrations land.
+    const names = async () =>
+      (
+        await sql<{ name: string }>`
+          SELECT name FROM kysely_migration
+        `.execute(db)
+      ).rows.map((row) => row.name);
+
+    const before = await names();
+    expect(before).toContain("0000_migration_smoke");
+
     const down = await migrator.migrateDown();
     expect(down.error).toBeUndefined();
-    const afterDown = await sql<{ count: string }>`
-      SELECT count(*)::text AS count FROM kysely_migration
-    `.execute(db);
-    expect(afterDown.rows[0]?.count).toBe("0");
+    const afterDown = await names();
+    expect(before.length - afterDown.length).toBe(1);
+    // The newest migration was rolled back; 0000 remains the executed base.
+    expect(afterDown).toEqual(before.slice(0, -1));
 
     const up = await migrator.migrateToLatest();
     expect(up.error).toBeUndefined();
-    const afterUp = await sql<{ count: string }>`
-      SELECT count(*)::text AS count FROM kysely_migration
-    `.execute(db);
-    expect(afterUp.rows[0]?.count).toBe("1");
+    const afterUp = await names();
+    expect(afterUp).toEqual(before);
   });
 
   it("creates no Origin Duel canonical application table", async () => {
+    // Isolate exactly the 0000 smoke migration: roll everything back, apply
+    // only 0000, verify, then restore latest so the database is left usable.
+    const none = await migrator.migrateTo(NO_MIGRATIONS);
+    expect(none.error).toBeUndefined();
+    const only = await migrator.migrateTo("0000_migration_smoke");
+    expect(only.error).toBeUndefined();
+
     const tables = await sql<{ table_name: string }>`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public'
     `.execute(db);
     const names = tables.rows.map((row) => row.table_name);
     for (const name of names) {
-      // Only Kysely migration bookkeeping may exist after T01.
+      // Only Kysely migration bookkeeping may exist after the smoke migration.
       expect(name.startsWith("kysely_migration")).toBe(true);
     }
+
+    const restore = await migrator.migrateToLatest();
+    expect(restore.error).toBeUndefined();
   });
 
   it("destroys the connection cleanly", async () => {
