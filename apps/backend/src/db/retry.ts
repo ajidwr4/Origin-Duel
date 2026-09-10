@@ -64,7 +64,10 @@ export interface RetryDbOptions {
    * Optional Kysely transaction isolation level. Serializable callers need it
    * so PostgreSQL can genuinely abort attempts with 40001.
    */
-  readonly isolationLevel?: "read committed" | "repeatable read" | "serializable";
+  readonly isolationLevel?:
+    | "read committed"
+    | "repeatable read"
+    | "serializable";
 }
 
 type DbOrTrx = Kysely<OriginDuelDatabase>;
