@@ -2,11 +2,13 @@
 pragma solidity 0.8.36;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {EvmV1Decoder} from "../lib/asc-contracts/contracts/common/EvmV1Decoder.sol";
 import {INativeQueryVerifier} from "../lib/asc-contracts/contracts/write-ability/common/INativeQueryVerifier.sol";
 import {MonsterFactoryASC} from "../src/MonsterFactoryASC.sol";
 import {MonsterNFT} from "../src/MonsterNFT.sol";
 import {TransactionType2V1} from "../src/lib/TransactionType2V1.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @dev Interface-compatible Block Prover test double (view-only, staticcall
 ///      compatible), injected through the immutable constructor argument.
@@ -46,7 +48,11 @@ contract RevertingCaptureReceiver {
 }
 
 /// @dev Receiver that reenters finalCapture for the same source from the
-///      ERC721 callback while the outer capture is still in flight.
+///      ERC721 callback while the outer capture is still in flight, and
+///      ABSORBS the guard revert inside try/catch. A Shanghai EVM caller can
+///      always hide a single recoverable sub-call, so the canonical guarantee
+///      here is that the absorbed attempt cannot yield anything beyond the
+///      single legitimate outer capture (GS11-06 residual-risk flip side).
 contract ReentrantCaptureReceiver {
     MonsterFactoryASC private factory;
     MonsterFactoryASC.ProofPayloadV1 private proof;
@@ -67,12 +73,39 @@ contract ReentrantCaptureReceiver {
 
     function onERC721Received(address, address, uint256, bytes calldata) external returns (bytes4) {
         // Re-enters the same capture: the nonReentrant guard must block this
-        // nested call, and its failure must not abort a legitimate mint.
+        // nested call; the receiver then elects to absorb that failure.
         try factory.finalCapture(claimedTxHash, proof, approval) {
             revert("reentrant capture unexpectedly succeeded");
         } catch {
             // Expected: blocked by Factory nonReentrant.
         }
+        return this.onERC721Received.selector;
+    }
+}
+
+/// @dev Receiver whose recursive finalCapture attempt PROPAGATES the guard
+///      revert (no absorption). The callback failure must fail the whole
+///      outer capture with zero surviving effects (NFT-01 / GS11-06).
+contract PropagatingReentrantCaptureReceiver {
+    MonsterFactoryASC private factory;
+    MonsterFactoryASC.ProofPayloadV1 private proof;
+    bytes32 private claimedTxHash;
+    MonsterFactoryASC.SignedAssetApprovalV1 private approval;
+
+    function arm(
+        MonsterFactoryASC factory_,
+        MonsterFactoryASC.ProofPayloadV1 calldata proof_,
+        bytes32 claimedTxHash_,
+        MonsterFactoryASC.SignedAssetApprovalV1 calldata approval_
+    ) external {
+        factory = factory_;
+        proof = proof_;
+        claimedTxHash = claimedTxHash_;
+        approval = approval_;
+    }
+
+    function onERC721Received(address, address, uint256, bytes calldata) external returns (bytes4) {
+        factory.finalCapture(claimedTxHash, proof, approval);
         return this.onERC721Received.selector;
     }
 }
@@ -519,6 +552,39 @@ contract MonsterFactoryASCFinalCaptureTest is Test {
         nft.ownerOf(0);
     }
 
+    function testReentrantReceiverAttemptRollsBackWholeCapture() public {
+        PropagatingReentrantCaptureReceiver receiver = new PropagatingReentrantCaptureReceiver();
+        MonsterFactoryASC.SignedAssetApprovalV1 memory signed = _receiverApproval(address(receiver));
+        receiver.arm(factory, _proof(_erc721Transport(address(receiver))), CLAIMED_TX_HASH, signed);
+
+        // The recursive finalCapture attempt reverts with the guard error and
+        // the callback lets it propagate: NFT-01 / GS11-06 outer rollback.
+        vm.prank(address(receiver));
+        vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
+        factory.finalCapture(CLAIMED_TX_HASH, _proof(_erc721Transport(address(receiver))), signed);
+
+        // REENTRANT_RECEIVER_OUTER_CAPTURE_ROLLBACK: zero surviving effects.
+        assertEq(factory.lookupReplay(CLAIMED_TX_HASH), 0);
+        assertEq(factory.lastCaptureAtExternal(address(receiver)), 0);
+        assertEq(nft.nextTokenId(), 0);
+        vm.expectRevert();
+        nft.ownerOf(0);
+        vm.expectRevert();
+        nft.monsterOf(0);
+        vm.expectRevert();
+        nft.tokenURI(0);
+
+        vm.recordLogs();
+        // No successful MonsterCaptured effect survived the reverted capture.
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        for (uint256 i = 0; i < entries.length; i++) {
+            assertFalse(
+                entries[i].topics[0] == MonsterFactoryASC.MonsterCaptured.selector,
+                "MonsterCaptured survived the failed capture"
+            );
+        }
+    }
+
     function testReentrantCaptureBlockedByGuardAndMintCompletes() public {
         ReentrantCaptureReceiver receiver = new ReentrantCaptureReceiver();
         MonsterFactoryASC.SignedAssetApprovalV1 memory signed = _receiverApproval(address(receiver));
@@ -526,7 +592,8 @@ contract MonsterFactoryASCFinalCaptureTest is Test {
 
         uint256 tokenId = _captureAs(address(receiver), signed);
 
-        // Outer capture completed exactly once; nested capture was blocked.
+        // Absorbed re-enters cannot widen the outcome: still exactly one
+        // legitimate capture, one replay consumption, one cooldown, one NFT.
         assertEq(tokenId, 0);
         assertEq(nft.ownerOf(0), address(receiver));
         assertEq(factory.lookupReplay(CLAIMED_TX_HASH), 1);
