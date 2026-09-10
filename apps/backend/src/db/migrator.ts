@@ -2,10 +2,10 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type Kysely,
   type Migration,
   type MigrationProvider,
   Migrator,
-  type Kysely,
 } from "kysely/migration";
 
 const MIGRATIONS_DIR = path.join(
@@ -38,10 +38,7 @@ class ExplicitMigrationProvider implements MigrationProvider {
       const migration = (await import(filePath)) as {
         default?: Migration;
       } & Migration;
-      const migrationKey = fileName.substring(
-        0,
-        fileName.lastIndexOf("."),
-      );
+      const migrationKey = fileName.substring(0, fileName.lastIndexOf("."));
       if (typeof migration.default?.up === "function") {
         migrations[migrationKey] = migration.default;
       } else if (typeof migration.up === "function") {
