@@ -1,0 +1,17 @@
+{
+  "schema": "OriginDuelAttestcoinPinV2",
+  "package": "@gluwa/asc-contracts",
+  "version": "0.2.1",
+  "artifactRevision": "npm:@gluwa/asc-contracts@0.2.1",
+  "sourceRevisionKind": "NPM_ARTIFACT",
+  "npmIntegrity": "sha512-3/zVx8ElFewTB0Xy06xJ/uPYfvFI1usOe/ilxoM5SNT9Cf47ML/YW41Pq00NttxuOPLkh8HnRlPgD1n66ritLA==",
+  "tarballSha256": "b45fffaf30fe94a1b050800dfd8a67e6e5e9564afbb12ce0422f2c3cb4289dee",
+  "repositoryUrlDeclared": "git+https://github.com/gluwa/asc-contracts.git",
+  "gitHeadDeclared": "7b9c3f11115ec6e680eb8ff18c68c2122e91a16d",
+  "gitProvenanceStatus": "UPSTREAM_METADATA_ONLY_NOT_INDEPENDENTLY_VERIFIED",
+  "vendorRoot": "contracts/lib/asc-contracts",
+  "sourceManifest": "contracts/attestcoin-sources.sha256",
+  "sourceManifestSha256": "6f6909620096498fdbca79fd69e85e6ab25728d699e63db281fb2c497c75ec15",
+  "interfaceSource": "contracts/write-ability/common/INativeQueryVerifier.sol",
+  "decoderSource": "contracts/common/EvmV1Decoder.sol"
+}
