@@ -230,11 +230,15 @@ export async function readFactoryPreflight(
   | { kind: "READ_FAILED"; errorKind: ChainReadErrorKind; cause: string }
   | ContractRevert
 > {
+  const claimantAddress = normalizeWalletAddress(claimant);
   const outcome = await readChain(async () => {
     const raw = (await readContract(client, {
       address: factoryAddress as `0x${string}`,
       abi: MONSTERFACTORYASC_ABI,
       functionName: "canonicalPreflight",
+      // canonicalPreflight(bytes32, tuple) — the claimant is msg.sender,
+      // resolved from the eth_call `from` address (DIRECT_TX_SENDER).
+      account: claimantAddress,
       args: [
         claimedTxHash,
         {
@@ -249,7 +253,6 @@ export async function readFactoryPreflight(
           lowerEndpointDigest: proof.lowerEndpointDigest,
           continuityRoots: proof.continuityRoots,
         },
-        normalizeWalletAddress(claimant),
       ],
     })) as {
       monster: {
