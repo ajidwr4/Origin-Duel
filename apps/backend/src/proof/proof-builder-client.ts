@@ -1,8 +1,8 @@
 /**
  * Proof Builder transport client (Phase 9 §16, Attestcoin-Protocol Prover
- * Server). The hosted Prover endpoint (proof-by-tx/{chainKey}/{txHash} and
- * attestation-height readiness) is an untrusted, replaceable HTTP
- * dependency — never proof authority. Cryptographic verification lives in
+ * Server). The hosted Prover endpoints (/api/v1/proof-by-tx/{chainKey}/{txHash}
+ * and /api/v1/attested-height/{chainKey}) are untrusted, replaceable HTTP
+ * dependencies — never proof authority. Cryptographic verification lives in
  * the Block Prover precompile; application acceptance lives in the Factory.
  * Provider-specific raw response objects never cross this boundary.
  */
@@ -25,11 +25,14 @@ export type ProofRequestOutcome =
   | { kind: "PROOF_NOT_READY"; readiness: ProofReadiness }
   | { kind: "PROOF_BUILDER_FAILED"; failure: ProofBuilderFailure };
 
-/** Raw vendor proof envelope as observed from the hosted builder. */
-export interface RawProofBuilderResponse {
-  success?: boolean;
-  error?: string;
-  data?: unknown;
+/**
+ * Live hosted-builder error body observed as HTTP 404:
+ * {"code":"TxHashNotFound"|"BlockNotOnSourceChain","message":...,"retriable":bool}
+ */
+export interface RawProofBuilderErrorBody {
+  code?: unknown;
+  message?: unknown;
+  retriable?: unknown;
 }
 
 export interface ProofBuilderClient {
@@ -54,10 +57,15 @@ export function createProofBuilderClient(
 ): ProofBuilderClient {
   const normalizedBase = baseUrl.replace(/\/+$/, "");
 
+  interface CallOutcome {
+    status: number;
+    body: unknown;
+  }
+
   async function call(
     path: string,
   ): Promise<
-    | { kind: "OK"; body: unknown }
+    | { kind: "OK"; result: CallOutcome }
     | { kind: "FAILED"; failure: ProofBuilderFailure }
   > {
     const controller = new AbortController();
@@ -66,20 +74,17 @@ export function createProofBuilderClient(
       const response = await fetchFn(`${normalizedBase}${path}`, {
         signal: controller.signal,
       });
-      if (!response.ok) {
-        return {
-          kind: "FAILED",
-          failure: { kind: "PROOF_BUILDER_UNAVAILABLE" },
-        };
-      }
-      const body: unknown = await response.json();
-      return { kind: "OK", body };
+      const body: unknown = await response.json().catch(() => undefined);
+      // The live builder answers not-ready conditions with HTTP 404 + a JSON
+      // error body (TxHashNotFound / BlockNotOnSourceChain); pass the status
+      // through so requestProof can classify provider intent precisely.
+      return { kind: "OK", result: { status: response.status, body } };
     } catch (error) {
       const name = (error as { name?: string } | undefined)?.name;
       if (name === "AbortError" || name === "TimeoutError") {
         return { kind: "FAILED", failure: { kind: "PROOF_BUILDER_TIMEOUT" } };
       }
-      // Network-level failure (fetch TypeError etc) or JSON parse failure.
+      // Network-level failure (fetch TypeError etc).
       return { kind: "FAILED", failure: { kind: "PROOF_BUILDER_UNAVAILABLE" } };
     } finally {
       clearTimeout(timeout);
@@ -88,58 +93,84 @@ export function createProofBuilderClient(
 
   return {
     async checkReadiness(_claimedTxHash) {
-      // Hosted prover attestation-cache readiness probe: the documented
-      // builder interface exposes height-attested state per chainKey, not
-      // per transaction — readiness for a specific tx is resolved by the
-      // proof request itself.
-      const outcome = await call(`/attested-height/${ATTESTCOIN_CHAIN_KEY}`);
+      // Hosted prover attestation-cache readiness: the highest source chain
+      // height that has been attested on Creditcoin, per chainKey. It is a
+      // cache-level signal; per-tx readiness is resolved by the proof request
+      // itself (which reports reorg-window / unknown-tx conditions).
+      const outcome = await call(
+        `/api/v1/attested-height/${ATTESTCOIN_CHAIN_KEY}`,
+      );
       if (outcome.kind === "FAILED") {
         return { kind: "FAILED", failure: outcome.failure };
       }
-      const body = outcome.body as { data?: { blockHeight?: unknown } } | null;
-      const height = body?.data?.blockHeight;
-      if (typeof height !== "number" && typeof height !== "string") {
+      if (outcome.result.status !== 200) {
+        return {
+          kind: "FAILED",
+          failure: { kind: "PROOF_BUILDER_UNAVAILABLE" },
+        };
+      }
+      const body = outcome.result.body as { attestedHeight?: unknown } | null;
+      const height = body?.attestedHeight;
+      if (
+        typeof height !== "number" ||
+        !Number.isInteger(height) ||
+        height < 0
+      ) {
         return {
           kind: "FAILED",
           failure: { kind: "PROOF_BUILDER_MALFORMED_RESPONSE" },
         };
       }
-      // The cache reports the highest attested source height; readiness for
-      // a specific tx still needs the tx lookup, which requestProof owns.
+      // Readiness is only meaningful against a specific tx block; the caller
+      // supplies the claimed tx hash, so without a per-tx lookup here we
+      // cannot assert the tx's own block is below the attested height. The
+      // proof request path answers definitively; the cache signal alone means
+      // attestation is running (never an authoritative per-tx answer).
       return {
         kind: "READINESS",
-        readiness: { ready: false, reason: "NOT_ATTESTED_YET" },
+        readiness:
+          height > 0
+            ? { ready: true, blockHeight: String(height) }
+            : { ready: false, reason: "NOT_ATTESTED_YET" },
       };
     },
 
     async requestProof(claimedTxHash) {
       const outcome = await call(
-        `/proof-by-tx/${ATTESTCOIN_CHAIN_KEY}/${claimedTxHash}`,
+        `/api/v1/proof-by-tx/${ATTESTCOIN_CHAIN_KEY}/${claimedTxHash}`,
       );
       if (outcome.kind === "FAILED") {
         return { kind: "PROOF_BUILDER_FAILED", failure: outcome.failure };
       }
-      const envelope = outcome.body as RawProofBuilderResponse | null;
-      if (
-        envelope === null ||
-        typeof envelope !== "object" ||
-        envelope.success === undefined
-      ) {
-        return {
-          kind: "PROOF_BUILDER_FAILED",
-          failure: { kind: "PROOF_BUILDER_MALFORMED_RESPONSE" },
-        };
+      if (outcome.result.status === 200) {
+        const raw = outcome.result.body as Record<string, unknown> | null;
+        if (
+          raw === null ||
+          typeof raw !== "object" ||
+          !("txBytes" in raw && "headerNumber" in raw)
+        ) {
+          return {
+            kind: "PROOF_BUILDER_FAILED",
+            failure: { kind: "PROOF_BUILDER_MALFORMED_RESPONSE" },
+          };
+        }
+        return { kind: "PROOF_RECEIVED", raw };
       }
-      if (!envelope.success) {
+      if (outcome.result.status === 404) {
         // Provider-side not-ready/not-provable answer: retryable condition,
         // never authoritative rejection of the source transaction.
-        const reasonText = String(envelope.error ?? "");
-        const readiness: ProofReadiness = reasonText.includes("not attested")
-          ? { ready: false, reason: "NOT_ATTESTED_YET" }
-          : { ready: false, reason: "UNKNOWN_TX" };
+        const body = outcome.result.body as RawProofBuilderErrorBody | null;
+        const code = typeof body?.code === "string" ? body.code : "";
+        const readiness: ProofReadiness =
+          code === "BlockNotOnSourceChain" || code === "BlockNotAttested"
+            ? { ready: false, reason: "NOT_ATTESTED_YET" }
+            : { ready: false, reason: "UNKNOWN_TX" };
         return { kind: "PROOF_NOT_READY", readiness };
       }
-      return { kind: "PROOF_RECEIVED", raw: envelope.data };
+      return {
+        kind: "PROOF_BUILDER_FAILED",
+        failure: { kind: "PROOF_BUILDER_UNAVAILABLE" },
+      };
     },
   };
 }
