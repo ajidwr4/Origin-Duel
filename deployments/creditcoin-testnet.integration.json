@@ -1,0 +1,38 @@
+{
+  "schema": "origin-duel-integration-manifest-v1",
+  "purpose": "INTEGRATION_TEST_DEPLOYMENT",
+  "chainId": 102031,
+  "deployer": "0xf8f18eb3bef575e75e5f6cd8eccb9ae1f165e052",
+  "startingNonce": "0",
+  "predictedNFT": "0x2d53c642f75c5bd5f5b5e8831b698c691e31e6c3",
+  "predictedFactory": "0x89d765049238f80c84803e0a52c0352d93f12663",
+  "predictedMarketplace": "0xf8fa6d941a1de9078289e96d783173fa39aab988",
+  "actualNFT": "0x2d53c642f75c5bd5f5b5e8831b698c691e31e6c3",
+  "actualFactory": "0x89d765049238f80c84803e0a52c0352d93f12663",
+  "actualMarketplace": "0xf8fa6d941a1de9078289e96d783173fa39aab988",
+  "assetApprovalSigner": "0xf8f18eb3bef575e75e5f6cd8eccb9ae1f165e052",
+  "captureGenesisBlock": "2286391",
+  "blockProver": "0x0000000000000000000000000000000000000fd2",
+  "temporaryBuildProfile": {
+    "purpose": "M05_GATE_F_TEMPORARY_ONLY",
+    "optimizer": true,
+    "optimizerRuns": 200,
+    "viaIR": true,
+    "solc": "0.8.36",
+    "evmVersion": "shanghai",
+    "monsterFactoryDeployedBytecodeBytes": 15648,
+    "eip170LimitBytes": 24576
+  },
+  "deploymentTxHashes": [
+    "0xdfda614e7576229e75e1dca9a9deda8b481024bc555443908be4d660469a24fe",
+    "0xbabcf5ad8a777b02e2f8da0dc6cbd6d166aec7b9db444334941ddd72e20818a7",
+    "0x084de41001e67c09aca7f742dfecbd0ccb6e723288799442c0b42e4aea64618c"
+  ],
+  "deploymentBlockNumbers": {
+    "nft": "5470159",
+    "factory": "5470160",
+    "marketplace": "5470163"
+  },
+  "sourceTxHash": "0xf5c4564eba9f464c7a8ecc44eba23678fc3bfda96c4d7757387409fafb74e241",
+  "createdAt": "2026-09-11T00:00:00.000Z"
+}
